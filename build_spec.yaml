@@ -9,24 +9,60 @@ env:
     OCIR_NAMESPACE: "axn0sp6l8tzt"
     OCIR_REPO: "poc-oci-legal4c"
 
+    OCIR_USERNAME_SECRET_OCID: "ocid1.vaultsecret.oc1.us-chicago-1.amaaaaaamnxd4byamfbgn4awpsnqfrs7axx2epu6bgrlqqv3kucexfeqcjsa"
+    OCIR_AUTH_TOKEN_SECRET_OCID: "ocid1.vaultsecret.oc1.us-chicago-1.amaaaaaamnxd4byaoofxn3fvn3537rnxjy4dbeb55fbzdzfqltye6j7a5mqa"
+
 steps:
   - type: Command
-    name: "Login no OCIR"
+    name: "Load OCIR creds from Vault"
     command: |
+      set -euo pipefail
+
+      echo "Fetching OCIR username from Vault secret..."
+      OCIR_USERNAME=$(oci secrets secret-bundle get \
+        --secret-id "${OCIR_USERNAME_SECRET_OCID}" \
+        --query "data.secretBundleContent.content" \
+        --raw-output | base64 --decode)
+
+      echo "Fetching OCIR auth token from Vault secret..."
+      OCIR_AUTH_TOKEN=$(oci secrets secret-bundle get \
+        --secret-id "${OCIR_AUTH_TOKEN_SECRET_OCID}" \
+        --query "data.secretBundleContent.content" \
+        --raw-output | base64 --decode)
+
+      # Persist for next steps (do NOT echo secrets to logs)
+      {
+        echo "export OCIR_USERNAME='${OCIR_USERNAME}'"
+        echo "export OCIR_AUTH_TOKEN='${OCIR_AUTH_TOKEN}'"
+      } >> "$BASH_ENV"
+
+  - type: Command
+    name: "Docker login to OCIR"
+    command: |
+      set -euo pipefail
+      source "$BASH_ENV"
       echo "${OCIR_AUTH_TOKEN}" | docker login "${OCIR_REGISTRY}" -u "${OCIR_USERNAME}" --password-stdin
 
   - type: Command
-    name: "Build e tag"
+    name: "Build + tag image"
     command: |
+      set -euo pipefail
+      source "$BASH_ENV"
+
       IMAGE="${OCIR_REGISTRY}/${OCIR_NAMESPACE}/${OCIR_REPO}"
       TAG="${OCI_BUILD_RUN_ID}"
+
       docker build -t "${IMAGE}:${TAG}" .
       docker tag "${IMAGE}:${TAG}" "${IMAGE}:latest"
 
   - type: Command
-    name: "Push para OCIR"
+    name: "Push image to OCIR"
     command: |
+      set -euo pipefail
+      source "$BASH_ENV"
+
       IMAGE="${OCIR_REGISTRY}/${OCIR_NAMESPACE}/${OCIR_REPO}"
       TAG="${OCI_BUILD_RUN_ID}"
+
       docker push "${IMAGE}:${TAG}"
       docker push "${IMAGE}:latest"
