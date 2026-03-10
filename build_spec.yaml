@@ -1,6 +1,7 @@
 version: 0.1
 component: build
 timeoutInSeconds: 3600
+runAs: root
 shell: bash
 
 env:
@@ -9,77 +10,36 @@ env:
     OCIR_NAMESPACE: "axn0sp6l8tzt"
     OCIR_REPO: "poc-oci-legal4c"
 
-    OCIR_USERNAME_SECRET_OCID: "ocid1.vaultsecret.oc1.us-chicago-1.amaaaaaamnxd4byamfbgn4awpsnqfrs7axx2epu6bgrlqqv3kucexfeqcjsa"
-    OCIR_AUTH_TOKEN_SECRET_OCID: "ocid1.vaultsecret.oc1.us-chicago-1.amaaaaaamnxd4byaoofxn3fvn3537rnxjy4dbeb55fbzdzfqltye6j7a5mqa"
+  vaultVariables:
+    OCIR_USERNAME: "ocid1.vaultsecret.oc1.us-chicago-1.amaaaaaamnxd4byamfbgn4awpsnqfrs7axx2epu6bgrlqqv3kucexfeqcjsa"
+    OCIR_AUTH_TOKEN: "ocid1.vaultsecret.oc1.us-chicago-1.amaaaaaamnxd4byaoofxn3fvn3537rnxjy4dbeb55fbzdzfqltye6j7a5mqa"
 
 steps:
   - type: Command
-    name: "Load OCIR creds from Vault"
-    command: |
-      set -eo pipefail
-
-      ENV_FILE="/tmp/ocir_env.sh"
-      : > "$ENV_FILE"
-      chmod 600 "$ENV_FILE"
-
-      echo "Fetching OCIR username from Vault secret..."
-      OCIR_USERNAME_B64=$(oci --auth resource_principal secrets secret-bundle get \
-        --secret-id "${OCIR_USERNAME_SECRET_OCID}" \
-        --stage CURRENT \
-        --query "data.secretBundleContent.content" \
-        --raw-output)
-
-      echo "Fetching OCIR auth token from Vault secret..."
-      OCIR_AUTH_TOKEN_B64=$(oci --auth resource_principal secrets secret-bundle get \
-        --secret-id "${OCIR_AUTH_TOKEN_SECRET_OCID}" \
-        --stage CURRENT \
-        --query "data.secretBundleContent.content" \
-        --raw-output)
-
-      if [ -z "${OCIR_USERNAME_B64}" ] || [ -z "${OCIR_AUTH_TOKEN_B64}" ]; then
-        echo "ERROR: Secret content came back empty."
-        echo "Check: secret OCIDs, secret stage=CURRENT, region, and IAM policies for dynamic-group devopsdg."
-        exit 1
-      fi
-
-      OCIR_USERNAME=$(echo "${OCIR_USERNAME_B64}" | base64 --decode)
-      OCIR_AUTH_TOKEN=$(echo "${OCIR_AUTH_TOKEN_B64}" | base64 --decode)
-
-      # Persist for subsequent steps (do NOT print secrets)
-      echo "export OCIR_USERNAME='${OCIR_USERNAME}'" >> "$ENV_FILE"
-      echo "export OCIR_AUTH_TOKEN='${OCIR_AUTH_TOKEN}'" >> "$ENV_FILE"
-
-      echo "Secrets loaded into ${ENV_FILE}"
-
-  - type: Command
     name: "Docker login to OCIR"
+    timeoutInSeconds: 600
     command: |
       set -eo pipefail
-      source /tmp/ocir_env.sh
       echo "${OCIR_AUTH_TOKEN}" | docker login "${OCIR_REGISTRY}" -u "${OCIR_USERNAME}" --password-stdin
 
   - type: Command
     name: "Build + tag image"
+    timeoutInSeconds: 1800
     command: |
       set -eo pipefail
-      source /tmp/ocir_env.sh
-
       IMAGE="${OCIR_REGISTRY}/${OCIR_NAMESPACE}/${OCIR_REPO}"
       TAG="${OCI_BUILD_RUN_ID}"
 
-      echo "Building ${IMAGE}:${TAG}"
       docker build -t "${IMAGE}:${TAG}" .
       docker tag "${IMAGE}:${TAG}" "${IMAGE}:latest"
 
   - type: Command
     name: "Push image to OCIR"
+    timeoutInSeconds: 1800
     command: |
       set -eo pipefail
-      source /tmp/ocir_env.sh
-
       IMAGE="${OCIR_REGISTRY}/${OCIR_NAMESPACE}/${OCIR_REPO}"
       TAG="${OCI_BUILD_RUN_ID}"
 
-      echo "Pushing ${IMAGE}:${TAG} and ${IMAGE}:latest"
       docker push "${IMAGE}:${TAG}"
       docker push "${IMAGE}:latest"
